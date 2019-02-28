@@ -23,10 +23,9 @@ public class GoogleCastOptionsProvider implements OptionsProvider {
     NotificationOptions notificationOptions =
         new NotificationOptions.Builder()
             .setActions(
-                Arrays.asList(MediaIntentReceiver.ACTION_SKIP_NEXT,
-                              MediaIntentReceiver.ACTION_TOGGLE_PLAYBACK,
+                Arrays.asList(MediaIntentReceiver.ACTION_TOGGLE_PLAYBACK,
                               MediaIntentReceiver.ACTION_STOP_CASTING),
-                new int[] {1, 2})
+                new int[] {0, 1})
             .setTargetActivityClassName(
                 GoogleCastExpandedControlsActivity.class.getName())
             .build();
