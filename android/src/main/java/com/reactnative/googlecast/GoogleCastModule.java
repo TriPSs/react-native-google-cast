@@ -150,8 +150,7 @@ public class GoogleCastModule
           new WebImage(Uri.parse(params.getString("posterUrl"))));
     }
 
-    MediaInfo.Builder builder =
-        new MediaInfo.Builder(params.getString("mediaUrl"))
+    MediaInfo.Builder builder = new MediaInfo.Builder(params.getString("mediaUrl"))
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
             .setMetadata(movieMetadata);
 
@@ -178,7 +177,10 @@ public class GoogleCastModule
             .setName(trackData.getString("title"))
             .setSubtype(MediaTrack.SUBTYPE_SUBTITLES)
             .setContentId(trackData.getString("uri"))
-            .setContentType("text/vtt")
+            .setContentType(trackData.hasKey("type")
+                ? trackData.getString("type")
+                : "text/vtt"
+            )
             .setLanguage(trackData.getString("language"))
             .build();
 
