@@ -3,6 +3,7 @@ package com.reactnative.googlecast;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
+import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.util.Log;
 
@@ -17,6 +18,8 @@ import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.common.annotations.VisibleForTesting;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
+import com.google.android.gms.cast.Cast;
+import com.google.android.gms.cast.CastDevice;
 import com.google.android.gms.cast.MediaInfo;
 import com.google.android.gms.cast.MediaMetadata;
 import com.google.android.gms.cast.MediaTrack;
@@ -26,8 +29,13 @@ import com.google.android.gms.cast.framework.CastSession;
 import com.google.android.gms.cast.framework.SessionManager;
 import com.google.android.gms.cast.framework.SessionManagerListener;
 import com.google.android.gms.cast.framework.media.RemoteMediaClient;
+import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.common.api.Status;
 import com.google.android.gms.common.images.WebImage;
 
+import org.json.JSONObject;
+
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -52,6 +60,8 @@ public class GoogleCastModule
   protected static final String MEDIA_PLAYBACK_STARTED = "GoogleCast:MediaPlaybackStarted";
   protected static final String MEDIA_PLAYBACK_ENDED = "GoogleCast:MediaPlaybackEnded";
   protected static final String MEDIA_PROGRESS_UPDATED = "GoogleCast:MediaProgressUpdated";
+
+  protected static final String CHANNEL_MESSAGE_RECEIVED = "GoogleCast:ChannelMessageReceived";
 
   private CastSession mCastSession;
   private SessionManagerListener<CastSession> mSessionManagerListener;
@@ -85,6 +95,7 @@ public class GoogleCastModule
     constants.put("MEDIA_PLAYBACK_ENDED", MEDIA_PLAYBACK_ENDED);
     constants.put("MEDIA_PROGRESS_UPDATED", MEDIA_PROGRESS_UPDATED);
 
+    constants.put("CHANNEL_MESSAGE_RECEIVED", CHANNEL_MESSAGE_RECEIVED);
     return constants;
   }
 
@@ -104,7 +115,6 @@ public class GoogleCastModule
       @Override
       public void run() {
         RemoteMediaClient remoteMediaClient = mCastSession.getRemoteMediaClient();
-
         if (remoteMediaClient == null) {
           return;
         }
@@ -113,7 +123,6 @@ public class GoogleCastModule
         if (params.hasKey("playPosition")) {
           seconds = params.getInt("playPosition");
         }
-
         if (seconds == null) {
           seconds = 0;
         }
@@ -141,24 +150,26 @@ public class GoogleCastModule
     }
 
     if (params.hasKey("imageUrl") && params.getString("imageUrl") != null) {
-      movieMetadata.addImage(
-          new WebImage(Uri.parse(params.getString("imageUrl"))));
+      movieMetadata.addImage(new WebImage(Uri.parse(params.getString("imageUrl"))));
     }
 
     if (params.hasKey("posterUrl") && params.getString("posterUrl") != null) {
-      movieMetadata.addImage(
-          new WebImage(Uri.parse(params.getString("posterUrl"))));
+      movieMetadata.addImage(new WebImage(Uri.parse(params.getString("posterUrl"))));
     }
 
     MediaInfo.Builder builder = new MediaInfo.Builder(params.getString("mediaUrl"))
-            .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
-            .setMetadata(movieMetadata);
+        .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
+        .setMetadata(movieMetadata);
 
     if (params.hasKey("contentType") && params.getString("contentType") != null) {
       builder = builder.setContentType(params.getString("contentType"));
 
     } else {
       builder = builder.setContentType("video/mp4");
+    }
+
+    if (params.hasKey("customData") && params.getMap("customData") != null) {
+      builder = builder.setCustomData(new JSONObject(params.getMap("customData").toHashMap()));
     }
 
     if (params.hasKey("streamDuration")) {
@@ -205,15 +216,89 @@ public class GoogleCastModule
   }
 
   @ReactMethod
+  public void getCastDevice(final Promise promise) {
+    getReactApplicationContext().runOnUiQueueThread(new Runnable() {
+      @Override
+      public void run() {
+        if (mCastSession == null) {
+          promise.resolve(null);
+          return;
+        }
+
+        WritableMap map = Arguments.createMap();
+        map.putString("id", mCastSession.getCastDevice().getDeviceId());
+        map.putString("version", mCastSession.getCastDevice().getDeviceVersion());
+        map.putString("name", mCastSession.getCastDevice().getFriendlyName());
+        map.putString("model", mCastSession.getCastDevice().getModelName());
+        promise.resolve(map);
+      }
+    });
+  }
+
+  @ReactMethod
   public void getCastState(final Promise promise) {
     getReactApplicationContext().runOnUiQueueThread(new Runnable() {
       @Override
       public void run() {
-        CastContext castContext = CastContext.getSharedInstance(getReactApplicationContext());
-
+        CastContext castContext =
+            CastContext.getSharedInstance(getReactApplicationContext());
         promise.resolve(castContext.getCastState() - 1);
       }
     });
+  }
+
+  @ReactMethod
+  public void initChannel(final String namespace, final Promise promise) {
+    if (mCastSession != null) {
+      getReactApplicationContext().runOnUiQueueThread(new Runnable() {
+        @Override
+        public void run() {
+          try {
+            mCastSession.setMessageReceivedCallbacks(namespace, new Cast.MessageReceivedCallback() {
+              @Override
+              public void onMessageReceived(CastDevice castDevice, String channelNameSpace, String message) {
+                WritableMap map = Arguments.createMap();
+                map.putString("channel", channelNameSpace);
+                map.putString("message", message);
+                emitMessageToRN(CHANNEL_MESSAGE_RECEIVED, map);
+              }
+            });
+            promise.resolve(true);
+          } catch (IOException e) {
+            e.printStackTrace();
+            promise.reject(e);
+          }
+        }
+      });
+    }
+  }
+
+  @ReactMethod
+  public void sendMessage(final String message, final String namespace, final Promise promise) {
+    if (mCastSession != null) {
+      getReactApplicationContext().runOnUiQueueThread(new Runnable() {
+        @Override
+        public void run() {
+          try {
+            mCastSession.sendMessage(namespace, message)
+                .setResultCallback(new ResultCallback<Status>() {
+                  @Override
+                  public void onResult(@NonNull Status status) {
+                    if (!status.isSuccess()) {
+                      Log.i(REACT_CLASS, "Error :> Sending message failed");
+                      promise.reject(String.valueOf(status.getStatusCode()), status.getStatusMessage());
+                    } else {
+                      Log.i(REACT_CLASS, "Message sent Successfully");
+                      promise.resolve(true);
+                    }
+                  }
+                });
+          } catch (Exception e) {
+            e.printStackTrace();
+          }
+        }
+      });
+    }
   }
 
   @ReactMethod
@@ -281,7 +366,8 @@ public class GoogleCastModule
   @ReactMethod
   public void launchExpandedControls() {
     ReactApplicationContext context = getReactApplicationContext();
-    Intent intent = new Intent(context, GoogleCastExpandedControlsActivity.class);
+    Intent intent =
+        new Intent(context, GoogleCastExpandedControlsActivity.class);
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
     context.startActivity(intent);
   }
@@ -290,30 +376,16 @@ public class GoogleCastModule
     mSessionManagerListener = new GoogleCastSessionManagerListener(this);
   }
 
-  @ReactMethod
-  public void getCurrentDevice(final Promise promise) {
-    getReactApplicationContext().runOnUiQueueThread(new Runnable() {
-      @Override
-      public void run() {
-        WritableMap map = Arguments.createMap();
-        map.putString("id", mCastSession.getCastDevice().getDeviceId());
-        map.putString("version", mCastSession.getCastDevice().getDeviceVersion());
-        map.putString("name", mCastSession.getCastDevice().getFriendlyName());
-        map.putString("model", mCastSession.getCastDevice().getModelName());
-        promise.resolve(map);
-      }
-    });
-  }
-
   @Override
   public void onHostResume() {
     getReactApplicationContext().runOnUiQueueThread(new Runnable() {
       @Override
       public void run() {
-        SessionManager sessionManager = CastContext.getSharedInstance(getReactApplicationContext())
-            .getSessionManager();
-
-        sessionManager.addSessionManagerListener(mSessionManagerListener, CastSession.class);
+        SessionManager sessionManager =
+            CastContext.getSharedInstance(getReactApplicationContext())
+                .getSessionManager();
+        sessionManager.addSessionManagerListener(mSessionManagerListener,
+            CastSession.class);
       }
     });
   }
@@ -323,10 +395,11 @@ public class GoogleCastModule
     getReactApplicationContext().runOnUiQueueThread(new Runnable() {
       @Override
       public void run() {
-        SessionManager sessionManager = CastContext.getSharedInstance(getReactApplicationContext())
-            .getSessionManager();
-
-        sessionManager.removeSessionManagerListener(mSessionManagerListener, CastSession.class);
+        SessionManager sessionManager =
+            CastContext.getSharedInstance(getReactApplicationContext())
+                .getSessionManager();
+        sessionManager.removeSessionManagerListener(mSessionManagerListener,
+            CastSession.class);
       }
     });
   }

@@ -77,6 +77,21 @@ RCT_EXPORT_MODULE();
 
 # pragma mark - GCKCastContext methods
 
+RCT_REMAP_METHOD(getCastDevice,
+                 getCastDeviceWithResolver: (RCTPromiseResolveBlock) resolve
+                 rejecter: (RCTPromiseRejectBlock) reject) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    GCKDevice* device = [self->castSession device];
+    if (device == nil) { resolve(nil); }
+    else resolve(@{
+      @"id": device.deviceID,
+      @"version": device.deviceVersion,
+      @"name": device.friendlyName,
+      @"model": device.modelName,
+    });
+  });
+}
+
 RCT_REMAP_METHOD(getCastState,
                  getCastStateWithResolver: (RCTPromiseResolveBlock) resolve
                  rejecter: (RCTPromiseRejectBlock) reject) {
@@ -99,12 +114,15 @@ RCT_EXPORT_METHOD(showIntroductoryOverlay) {
 
 # pragma mark - GCKCastSession methods
 
-RCT_EXPORT_METHOD(initChannel: (NSString *)namespace) {
+RCT_EXPORT_METHOD(initChannel: (NSString *)namespace
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject) {
   dispatch_async(dispatch_get_main_queue(), ^{
     GCKGenericChannel *channel = [[GCKGenericChannel alloc] initWithNamespace:namespace];
     channel.delegate = self;
-    channels[namespace] = channel;
-    [castSession addChannel:channel];
+    self->channels[namespace] = channel;
+    [self->castSession addChannel:channel];
+    resolve(@(YES));
   });
 }
 
@@ -125,10 +143,23 @@ RCT_EXPORT_METHOD(endSession: (BOOL)stopCasting
 
 #pragma mark - GCKCastChannel methods
 
-RCT_EXPORT_METHOD(sendMessage: (NSString *)message toNamespace: (NSString *)namespace) {
+RCT_EXPORT_METHOD(sendMessage: (NSString *)message
+                  toNamespace: (NSString *)namespace
+                  resolver: (RCTPromiseResolveBlock) resolve
+                  rejecter: (RCTPromiseRejectBlock) reject) {
   GCKCastChannel *channel = channels[namespace];
-  if (channel) {
-    [channel sendTextMessage:message error:nil];
+  
+  if (!channel) {
+    NSError *error = [NSError errorWithDomain:NSCocoaErrorDomain code:GCKErrorCodeChannelNotConnected userInfo:nil];
+    return reject(@"no_channel", [NSString stringWithFormat:@"Channel for namespace %@ does not exist. Did you forget to call initChannel?", namespace], error);
+  }
+  
+  NSError *error;
+  [channel sendTextMessage:message error:&error];
+  if (error != nil) {
+    reject(error.localizedFailureReason, error.localizedDescription, error);
+  } else {
+    resolve(@(YES));
   }
 }
 
@@ -144,6 +175,7 @@ RCT_EXPORT_METHOD(castMedia: (NSDictionary *)params
   NSString *imageUrl = [RCTConvert NSString:params[@"imageUrl"]];
   NSString *posterUrl = [RCTConvert NSString:params[@"posterUrl"]];
   NSString *contentType = [RCTConvert NSString:params[@"contentType"]];
+  NSDictionary *customData = [RCTConvert NSDictionary:params[@"customData"]];
   double streamDuration = [RCTConvert double:params[@"streamDuration"]];
   double playPosition = [RCTConvert double:params[@"playPosition"]];
 
@@ -184,8 +216,7 @@ RCT_EXPORT_METHOD(castMedia: (NSDictionary *)params
                                       streamDuration:streamDuration
                                          mediaTracks:nil
                                       textTrackStyle:nil
-                                          customData:nil];
-
+                                          customData:customData];
   // Cast the video.
   if (castSession) {
     [castSession.remoteMediaClient loadMedia:mediaInfo
@@ -224,7 +255,7 @@ RCT_EXPORT_METHOD(seek : (int)playPosition) {
 
 #pragma mark - GCKSessionManagerListener events
 
--(void)sessionManager:(GCKSessionManager *)sessionManager willStartCastSession:(GCKCastSession *)session {
+-(void)sessionManager:(GCKSessionManager *)sessionManager willStartSession:(GCKCastSession *)session {
   [self sendEventWithName:SESSION_STARTING body:@{}];
 }
 
