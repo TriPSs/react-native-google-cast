@@ -58,8 +58,10 @@ class Main extends React.Component {
   }
 
   cast(video) {
+    GoogleCast.getCastDevice().then(console.log)
     GoogleCast.castMedia(video)
     GoogleCast.launchExpandedControls()
+    this.sendMessage()
   }
 
   render() {
@@ -136,6 +138,8 @@ class Main extends React.Component {
       SESSION_RESUMING SESSION_RESUMED SESSION_ENDING SESSION_ENDED
 
       MEDIA_STATUS_UPDATED MEDIA_PLAYBACK_STARTED MEDIA_PLAYBACK_ENDED MEDIA_PROGRESS_UPDATED
+
+      CHANNEL_CONNECTED CHANNEL_DISCONNECTED CHANNEL_MESSAGE_RECEIVED
     `
       .trim()
       .split(/\s+/)
@@ -145,6 +149,15 @@ class Main extends React.Component {
       GoogleCast.EventEmitter.addListener(GoogleCast[event], function() {
         console.log(event, arguments)
       })
+    })
+  }
+
+  sendMessage() {
+    const channel = 'urn:x-cast:com.reactnative.googlecast.example'
+
+    GoogleCast.initChannel(channel).then(() => {
+      debugger
+      GoogleCast.sendMessage(channel, JSON.stringify({ message: 'Hello' }))
     })
   }
 }
